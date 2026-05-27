@@ -1,4 +1,99 @@
-bin/
+# -*- mode: gitignore; -*-
+# if you don't have the mode: -> https://github.com/magit/git-modes.git
+
+# ---------------------------
+# CLAUDE
+# ---------------------------
+
+docs/superpowers/**
+CLAUDE.local.md
+
+.gitlab-aspect-workflows.yaml
+/bazel-*
+.idea
+.zed
+.ijwb
+.zed
+.vscode
+**/node_modules/
+**/.terraform/*
+**/.terraform.*
+**/lambda.zip
+.DS_Store
+user.bazelrc
+tools/remote.bazelrc
+dev-scripts/*
+**/target/
+!workflows/kilgore/app/**/target
+.bazel_fix_commands.json
+.github/pull_request_template.md
+# Allow develoeprs to use `git worktrees` checked out within a worktrees directory
+worktrees/
+# Bazel's MODULE lockfile isn't ready to check in yet as of Bazel 7.1.
+# Do allow for it to be created, however, since it gives a performance boost for local development.
+# [Store resolved repository attributes in the Bzlmod lockfile](https://github.com/bazelbuild/bazel/issues/19026)
+# [MODULE.bazel.lock file contains user specific paths](https://github.com/bazelbuild/bazel/issues/19621)
+# [Consider skipping bazel_tools@_ from lockfile](https://github.com/bazelbuild/bazel/issues/19971)
+# [MODULE.bazel.lock file "reads through" already-locked package manager](https://github.com/bazelbuild/bazel/issues/20272)
+# [moduleFileHash in MODULE.bazel.lock causes frequent Git merge conflicts](https://github.com/bazelbuild/bazel/issues/20369)
+MODULE.bazel.lock
+workflows/bessie/test/**/bazel-*
+workflows/bessie/test/**/bep.json
+infrastructure/modules/workflows/telemetry/grafana/config/datasources/amp-datasource.yaml
+
+
+# ------------------------
+# emacs - https://github.com/github/gitignore/blob/main/Global/Emacs.gitignore
+# ------------------------
+
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# Org-mode
+.org-id-locations
+*_archive
+
+# flymake-mode
+*_flymake.*
+
+# eshell files
+/eshell/history
+/eshell/lastdir
+
+# elpa packages
+/elpa/
+
+# reftex files
+*.rel
+
+# AUCTeX auto folder
+/auto/
+
+# cask packages
+.cask/
 dist/
-local/bin/terraform-provider-firehydrant
-local/examples/**/*
+
+# Flycheck
+flycheck_*.el
+
+# server auth directory
+/server/
+
+# projectiles files
+.projectile
+
+# directory configuration
+.dir-locals.el
+
+# network security
+/network-security.data
+
+# sqlite data blobs
+**/*.db
+**/*.sqlite*

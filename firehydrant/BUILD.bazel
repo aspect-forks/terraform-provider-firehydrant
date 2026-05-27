@@ -1,0 +1,48 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "firehydrant",
+    srcs = [
+        "buildinfo.go",
+        "client.go",
+        "errors.go",
+        "ingest_url.go",
+        "runbook_actions.go",
+        "runbooks.go",
+        "service_dependencies.go",
+        "severities.go",
+        "slack_channels.go",
+        "status_update_template.go",
+        "task_lists.go",
+        "transposers.go",
+        "types.go",
+    ],
+    importpath = "github.com/firehydrant/terraform-provider-firehydrant/firehydrant",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_dghubble_sling//:sling",
+        "@com_github_firehydrant_firehydrant_go_sdk//:firehydrant-go-sdk",
+        "@com_github_firehydrant_firehydrant_go_sdk//models/components",
+        "@com_github_google_go_querystring//query",
+        "@com_github_hashicorp_terraform_plugin_log//tflog",
+        "@com_github_pkg_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "firehydrant_test",
+    srcs = [
+        "client_test.go",
+        "errors_test.go",
+        "ingest_url_test.go",
+        "slack_channels_test.go",
+        "status_update_template_test.go",
+        "transposers_test.go",
+    ],
+    embed = [":firehydrant"],
+    deps = [
+        "@com_github_bxcodec_faker_v3//:faker",
+        "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
+    ],
+)

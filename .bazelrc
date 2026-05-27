@@ -1,0 +1,8 @@
+# Don't report when root module's lower bound is less than resolved version.
+common --check_direct_dependencies=off
+
+# Bazel 7 bzlmod
+common --enable_bzlmod
+
+# Try-import user-local overrides (not committed).
+try-import %workspace%/user.bazelrc

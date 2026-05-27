@@ -1,0 +1,1 @@
+exports_files(["multi_platform_go_binaries.bzl"])
