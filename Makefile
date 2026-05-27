@@ -3,7 +3,7 @@ HOSTNAME=registry.terraform.io
 NAMESPACE=firehydrant
 NAME=firehydrant
 BINARY=terraform-provider-${NAME}
-VERSION=0.1.4
+VERSION=0.0.0-aspect-0
 OS_ARCH=darwin_amd64
 
 default: install
@@ -52,6 +52,7 @@ install_as_terraform_plugin: build
 .PHONY: release
 release:
 	GOOS=darwin GOARCH=amd64 go build -o ./bin/${BINARY}_${VERSION}_darwin_amd64
+	GOOS=darwin GOARCH=arm64 go build -o ./bin/${BINARY}_${VERSION}_darwin_arm64
 	GOOS=freebsd GOARCH=386 go build -o ./bin/${BINARY}_${VERSION}_freebsd_386
 	GOOS=freebsd GOARCH=amd64 go build -o ./bin/${BINARY}_${VERSION}_freebsd_amd64
 	GOOS=freebsd GOARCH=arm go build -o ./bin/${BINARY}_${VERSION}_freebsd_arm
