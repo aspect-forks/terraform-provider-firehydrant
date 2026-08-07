@@ -52,9 +52,9 @@ func Provider() *schema.Provider {
 			"firehydrant_on_call_schedule":       resourceOnCallSchedule(),
 			"firehydrant_escalation_policy":      resourceEscalationPolicy(),
 			"firehydrant_status_update_template": resourceStatusUpdateTemplate(),
-			"firehydrant_inbound_email":            resourceInboundEmail(),
-			"firehydrant_custom_event_source":      resourceCustomEventSource(),
-			"firehydrant_signal_webhook_target":    resourceSignalWebhookTarget(),
+			"firehydrant_inbound_email":          resourceInboundEmail(),
+			"firehydrant_custom_event_source":    resourceCustomEventSource(),
+			"firehydrant_signal_webhook_target":  resourceSignalWebhookTarget(),
 		},
 		DataSourcesMap: map[string]*schema.Resource{
 			"firehydrant_environment":       dataSourceEnvironment(),
@@ -103,7 +103,7 @@ func setupFireHydrantContext(ctx context.Context, rd *schema.ResourceData, terra
 	fireHydrantBaseURL := rd.Get(firehydrantBaseURLName).(string)
 
 	// Add minimal delay between provider initializations in CI to avoid rate limiting
-	if os.Getenv("TF_ACC") == "true" {
+	if os.Getenv("TF_ACC") != "" {
 		time.Sleep(500 * time.Millisecond)
 	}
 
@@ -119,7 +119,7 @@ func setupFireHydrantContext(ctx context.Context, rd *schema.ResourceData, terra
 
 	// We're getting 429s during tests, so the var here is intended to reduce overall API calls.  The old provider, horrifyingly, seems
 	// to do part of its setup during this Ping() call, so we won't disable that one, but just cutting the pings in half should be sufficient.
-	if os.Getenv("TF_ACC") != "true" {
+	if os.Getenv("TF_ACC") == "" {
 		_, err = ac.Sdk.AccountSettings.Ping(ctx)
 		if err != nil {
 			return nil, diag.FromErr(err)

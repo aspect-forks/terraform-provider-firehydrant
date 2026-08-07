@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -19,7 +20,80 @@ import (
 	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 )
 
+// Regression test: the API accepts start_time for every strategy type (it
+// seeds the initial rotation's first shift), but the provider used to discard
+// it for non-custom strategies, silently starting weekly rotations at the
+// beginning of the week. The API never echoes start_time back, so the drop
+// was invisible in state diffs.
+func TestOfflineOnCallScheduleCreate_sendsStartTimeForWeeklyStrategy(t *testing.T) {
+	var createBody map[string]interface{}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if req.Method == "POST" {
+			if err := json.NewDecoder(req.Body).Decode(&createBody); err != nil {
+				t.Errorf("failed to decode create request body: %v", err)
+			}
+			w.WriteHeader(http.StatusCreated)
+		}
+		w.Write([]byte(`{
+  "id": "schedule-id",
+  "name": "test-schedule",
+  "description": "test-description",
+  "time_zone": "America/New_York",
+  "members": [],
+  "strategy": {"type": "weekly", "handoff_time": "10:00:00", "handoff_day": "thursday"},
+  "restrictions": [],
+  "rotations": []
+}`))
+	}))
+	defer ts.Close()
+
+	client := &firehydrant.APIClient{}
+	client.Sdk = fhsdk.New(
+		fhsdk.WithServerURL(ts.URL),
+		fhsdk.WithSecurity(components.Security{
+			APIKey: "test-token-very-authorized",
+		}),
+	)
+
+	startTime := "2026-06-15T09:00:00Z"
+	r := schema.TestResourceDataRaw(t, resourceOnCallSchedule().Schema, map[string]interface{}{
+		"team_id":     "team-1",
+		"name":        "test-schedule",
+		"description": "test-description",
+		"time_zone":   "America/New_York",
+		"start_time":  startTime,
+		"strategy": []interface{}{
+			map[string]interface{}{
+				"type":         "weekly",
+				"handoff_time": "10:00:00",
+				"handoff_day":  "thursday",
+			},
+		},
+	})
+
+	d := createResourceFireHydrantOnCallSchedule(context.Background(), r, client)
+	if d.HasError() {
+		t.Fatalf("error creating on-call schedule: %v", d)
+	}
+
+	if createBody == nil {
+		t.Fatal("create request body was never captured")
+	}
+
+	got, ok := createBody["start_time"]
+	if !ok {
+		t.Fatalf("start_time missing from create request body; body keys: %v", createBody)
+	}
+	if got != startTime {
+		t.Fatalf("expected start_time %q in create request body, got %q", startTime, got)
+	}
+}
+
 func TestAccOnCallScheduleResource_basic(t *testing.T) {
+	t.Parallel()
 	sharedTeamID := getSharedTeamID(t)
 	rName := acctest.RandStringFromCharSet(20, acctest.CharSetAlphaNum)
 
@@ -141,6 +215,7 @@ func testAccOnCallScheduleConfig_restrictions(rName, sharedTeamID string) string
 }
 
 func TestAccOnCallScheduleResource_rotationName(t *testing.T) {
+	t.Parallel()
 	sharedTeamID := getSharedTeamID(t)
 	rName := acctest.RandStringFromCharSet(20, acctest.CharSetAlphaNum)
 
@@ -454,6 +529,7 @@ func TestOfflineOnCallScheduleCreateDeprecated(t *testing.T) {
 }
 
 func TestAccOnCallScheduleResource_updateHandoffAndRestrictions(t *testing.T) {
+	t.Parallel()
 	sharedTeamID := getSharedTeamID(t)
 	rName := acctest.RandStringFromCharSet(20, acctest.CharSetAlphaNum)
 
@@ -569,6 +645,7 @@ func testAccOnCallScheduleConfig_withHandoffAndRestrictions(rName, handoffDay, h
 }
 
 func TestAccOnCallScheduleResource_scheduleModifications(t *testing.T) {
+	t.Parallel()
 	sharedTeamID := getSharedTeamID(t)
 	rName := acctest.RandStringFromCharSet(20, acctest.CharSetAlphaNum)
 
@@ -655,6 +732,7 @@ func testAccOnCallScheduleConfig_withBusinessHours(rName, handoffDay, handoffTim
 }
 
 func TestAccOnCallScheduleResource_effectiveAt(t *testing.T) {
+	t.Parallel()
 	sharedTeamID := getSharedTeamID(t)
 	rName := acctest.RandStringFromCharSet(20, acctest.CharSetAlphaNum)
 	futureTime := time.Now().Add(24 * time.Hour).Format(time.RFC3339) // Tomorrow
@@ -663,10 +741,7 @@ func TestAccOnCallScheduleResource_effectiveAt(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:          func() { testFireHydrantIsSetup(t) },
 		ProviderFactories: sharedProviderFactories(),
-		CheckDestroy: resource.ComposeTestCheckFunc(
-			testAccCheckOnCallScheduleResourceDestroy(),
-			testAccCheckTeamResourceDestroy(),
-		),
+		CheckDestroy:      testAccCheckOnCallScheduleResourceDestroy(),
 		Steps: []resource.TestStep{
 			{
 				// Initial schedule setup
@@ -733,6 +808,7 @@ func testAccOnCallScheduleConfig_withEffectiveAt(rName, handoffDay, handoffTime,
 }
 
 func TestAccOnCallScheduleResourceImport_basic(t *testing.T) {
+	t.Parallel()
 	sharedTeamID := getSharedTeamID(t)
 	rName := acctest.RandStringFromCharSet(20, acctest.CharSetAlphaNum)
 
@@ -741,10 +817,7 @@ func TestAccOnCallScheduleResourceImport_basic(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:          func() { testFireHydrantIsSetup(t) },
 		ProviderFactories: sharedProviderFactories(),
-		CheckDestroy: resource.ComposeTestCheckFunc(
-			testAccCheckOnCallScheduleResourceDestroy(),
-			testAccCheckTeamResourceDestroy(),
-		),
+		CheckDestroy:      testAccCheckOnCallScheduleResourceDestroy(),
 		Steps: []resource.TestStep{
 			{
 				Config: testAccOnCallScheduleConfig_basic(rName, sharedTeamID),
