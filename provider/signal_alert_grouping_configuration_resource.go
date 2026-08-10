@@ -252,16 +252,12 @@ func deleteResourceFireHydrantSignalAlertGroupingConfiguration(ctx context.Conte
 	})
 	err := client.Sdk.Signals.DeleteSignalsAlertGroupingConfiguration(ctx, groupingID)
 	if err != nil {
-		// A grouping configuration that has already been deleted is not an error,
-		// it just needs to come out of state.
-		if sdkErr, ok := err.(*sdkerrors.SDKError); ok && sdkErr.StatusCode == 404 {
-			tflog.Debug(ctx, fmt.Sprintf("Signal alert grouping configuration %s no longer exists", groupingID), map[string]interface{}{
-				"id": groupingID,
-			})
-			d.SetId("")
-			return nil
+		if !signalsDeleteErrorMeansGone(err) {
+			return diag.Errorf("Error deleting signal alert grouping configuration %s: %v", groupingID, err)
 		}
-		return diag.Errorf("Error deleting signal alert grouping configuration %s: %v", groupingID, err)
+		tflog.Debug(ctx, fmt.Sprintf("Signal alert grouping configuration %s is gone: %v", groupingID, err), map[string]interface{}{
+			"id": groupingID,
+		})
 	}
 
 	d.SetId("")

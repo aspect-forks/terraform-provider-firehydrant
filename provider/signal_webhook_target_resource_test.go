@@ -3,10 +3,14 @@ package provider
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/firehydrant/terraform-provider-firehydrant/firehydrant"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/terraform"
 )
 
@@ -279,4 +283,80 @@ resource "firehydrant_signal_webhook_target" "test_signal_webhook_target" {
   description = "test-description-%s"
   signing_key = "test-signing-key-%s"
 }`, rName, rName, rName)
+}
+
+// This tests the delete path against a server that answers the way FireHydrant
+// does. The Signals delete operations in the SDK treat 204 as the only success and
+// report every other status, success included, as an unknown status code, so a
+// delete that worked can arrive as an error carrying a 2xx status.
+func TestDeleteResourceFireHydrantSignalWebhookTarget(t *testing.T) {
+	const webhookTargetID = "00000000-0000-4000-8000-000000000000"
+
+	for _, tc := range []struct {
+		name        string
+		status      int
+		body        string
+		expectError bool
+		expectID    string
+	}{
+		{
+			name:     "200 with the deleted webhook target",
+			status:   http.StatusOK,
+			body:     `{"id":"` + webhookTargetID + `","name":"Example","url":"https://example.com/webhook"}`,
+			expectID: "",
+		},
+		{
+			name:     "204 with no body",
+			status:   http.StatusNoContent,
+			expectID: "",
+		},
+		{
+			name:     "404 when it is already gone",
+			status:   http.StatusNotFound,
+			body:     `{"error":"not found"}`,
+			expectID: "",
+		},
+		{
+			name:        "500 is still a failure",
+			status:      http.StatusInternalServerError,
+			body:        `{"error":"boom"}`,
+			expectError: true,
+			expectID:    webhookTargetID,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotMethod, gotPath string
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				gotMethod, gotPath = req.Method, req.URL.Path
+				w.WriteHeader(tc.status)
+				if tc.body != "" {
+					w.Write([]byte(tc.body))
+				}
+			}))
+			defer ts.Close()
+
+			client, err := firehydrant.NewRestClient("test-token-very-authorized", firehydrant.WithBaseURL(ts.URL+"/v1/"))
+			if err != nil {
+				t.Fatalf("Received error initializing API client: %v", err)
+			}
+
+			d := schema.TestResourceDataRaw(t, resourceSignalWebhookTarget().Schema, map[string]interface{}{})
+			d.SetId(webhookTargetID)
+
+			diags := deleteResourceFireHydrantSignalWebhookTarget(context.Background(), d, client)
+
+			if got := diags.HasError(); got != tc.expectError {
+				t.Fatalf("Unexpected error state. Expected error: %v, got: %v (%v)", tc.expectError, got, diags)
+			}
+			if got := d.Id(); got != tc.expectID {
+				t.Errorf("Unexpected ID. Expected: %q, got: %q", tc.expectID, got)
+			}
+			if gotMethod != http.MethodDelete {
+				t.Errorf("Unexpected method. Expected: %s, got: %s", http.MethodDelete, gotMethod)
+			}
+			if expected := "/v1/signals/webhook_targets/" + webhookTargetID; gotPath != expected {
+				t.Errorf("Unexpected path. Expected: %s, got: %s", expected, gotPath)
+			}
+		})
+	}
 }

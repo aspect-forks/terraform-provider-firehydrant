@@ -4,12 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"regexp"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/firehydrant/firehydrant-go-sdk/models/components"
+	"github.com/firehydrant/terraform-provider-firehydrant/firehydrant"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/resource"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
@@ -686,4 +691,213 @@ func sortedStrings(values []interface{}) []string {
 	}
 	sort.Strings(s)
 	return s
+}
+
+// This is the regression test for the delete path. The Signals delete operations
+// in the SDK treat 204 as the only success, but the alert grouping endpoint answers
+// 200 with the configuration it deleted, so a delete that worked arrives as an
+// error carrying a 2xx status. This drives the real delete against a server that
+// answers the way FireHydrant does.
+func TestDeleteResourceFireHydrantSignalAlertGroupingConfiguration(t *testing.T) {
+	const groupingID = "03153ea9-4d3a-4659-b3a9-00e10b322637"
+
+	// The body FireHydrant returns alongside the 200 on a successful delete.
+	deletedBody := `{"id":"` + groupingID + `","strategy":{"substring":{"field_name":"tags","value":"","values":["smoketest:false","source:hello-world","environment:aspect"],"match_type":"and"}},"action":{"link":true},"reference_alert_time_period":"PT30M"}`
+
+	for _, tc := range []struct {
+		name        string
+		status      int
+		body        string
+		expectError bool
+		expectID    string
+	}{
+		{
+			name:     "200 with the deleted configuration",
+			status:   http.StatusOK,
+			body:     deletedBody,
+			expectID: "",
+		},
+		{
+			name:     "204 with no body",
+			status:   http.StatusNoContent,
+			expectID: "",
+		},
+		{
+			// Already deleted out of band, so it only has to leave state.
+			name:     "404 when it is already gone",
+			status:   http.StatusNotFound,
+			body:     `{"error":"not found"}`,
+			expectID: "",
+		},
+		{
+			name:        "500 is still a failure",
+			status:      http.StatusInternalServerError,
+			body:        `{"error":"boom"}`,
+			expectError: true,
+			expectID:    groupingID,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var gotMethod, gotPath string
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				gotMethod, gotPath = req.Method, req.URL.Path
+				w.WriteHeader(tc.status)
+				if tc.body != "" {
+					w.Write([]byte(tc.body))
+				}
+			}))
+			defer ts.Close()
+
+			client, err := firehydrant.NewRestClient("test-token-very-authorized", firehydrant.WithBaseURL(ts.URL+"/v1/"))
+			if err != nil {
+				t.Fatalf("Received error initializing API client: %v", err)
+			}
+
+			d := schema.TestResourceDataRaw(t, resourceSignalAlertGroupingConfiguration().Schema, map[string]interface{}{})
+			d.SetId(groupingID)
+
+			diags := deleteResourceFireHydrantSignalAlertGroupingConfiguration(context.Background(), d, client)
+
+			if got := diags.HasError(); got != tc.expectError {
+				t.Fatalf("Unexpected error state. Expected error: %v, got: %v (%v)", tc.expectError, got, diags)
+			}
+			if got := d.Id(); got != tc.expectID {
+				t.Errorf("Unexpected ID. Expected: %q, got: %q", tc.expectID, got)
+			}
+			if gotMethod != http.MethodDelete {
+				t.Errorf("Unexpected method. Expected: %s, got: %s", http.MethodDelete, gotMethod)
+			}
+			if expected := "/v1/signals/grouping/" + groupingID; gotPath != expected {
+				t.Errorf("Unexpected path. Expected: %s, got: %s", expected, gotPath)
+			}
+		})
+	}
+}
+
+// signalAlertGroupingEntityJSON is the shape read returns, including the singular
+// value the API sends alongside the values list.
+func signalAlertGroupingEntityJSON(id, fieldName string, values ...string) string {
+	quoted := make([]string, 0, len(values))
+	for _, v := range values {
+		quoted = append(quoted, `"`+v+`"`)
+	}
+	return `{"id":"` + id + `","strategy":{"substring":{"field_name":"` + fieldName +
+		`","value":"","values":[` + strings.Join(quoted, ",") +
+		`],"match_type":"and"}},"action":{"link":true},"reference_alert_time_period":"PT30M"}`
+}
+
+// This drives create and update over HTTP against a server that answers the way
+// FireHydrant does: 201 for create, 200 for update, and 200 for the read that each
+// one runs afterwards. It covers the request bodies going out and the state coming
+// back, which the request-builder and flatten tests only cover in halves.
+func TestCreateAndUpdateResourceFireHydrantSignalAlertGroupingConfigurationOverHTTP(t *testing.T) {
+	const groupingID = "03153ea9-4d3a-4659-b3a9-00e10b322637"
+
+	type recorded struct {
+		method string
+		path   string
+		body   string
+	}
+
+	newServer := func(t *testing.T, requests *[]recorded, fieldName string, values ...string) (*firehydrant.APIClient, *httptest.Server) {
+		t.Helper()
+
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			body, _ := io.ReadAll(req.Body)
+			*requests = append(*requests, recorded{req.Method, req.URL.Path, string(body)})
+
+			w.Header().Set("Content-Type", "application/json")
+			switch req.Method {
+			case http.MethodPost:
+				w.WriteHeader(http.StatusCreated)
+			default:
+				w.WriteHeader(http.StatusOK)
+			}
+			w.Write([]byte(signalAlertGroupingEntityJSON(groupingID, fieldName, values...)))
+		}))
+
+		client, err := firehydrant.NewRestClient("test-token-very-authorized", firehydrant.WithBaseURL(ts.URL+"/v1/"))
+		if err != nil {
+			t.Fatalf("Received error initializing API client: %v", err)
+		}
+		return client, ts
+	}
+
+	config := func(t *testing.T, fieldName string, values ...string) *schema.ResourceData {
+		t.Helper()
+
+		raw := make([]interface{}, 0, len(values))
+		for _, v := range values {
+			raw = append(raw, v)
+		}
+		return schema.TestResourceDataRaw(t, resourceSignalAlertGroupingConfiguration().Schema, map[string]interface{}{
+			"reference_alert_time_period": "PT30M",
+			"strategy": []interface{}{
+				map[string]interface{}{
+					"substring": []interface{}{
+						map[string]interface{}{"field_name": fieldName, "values": raw, "match_type": "and"},
+					},
+				},
+			},
+			"action": []interface{}{map[string]interface{}{"link": true}},
+		})
+	}
+
+	t.Run("create then read", func(t *testing.T) {
+		var requests []recorded
+		client, ts := newServer(t, &requests, "tags", "smoketest:false")
+		defer ts.Close()
+
+		d := config(t, "tags", "smoketest:false")
+		if diags := createResourceFireHydrantSignalAlertGroupingConfiguration(context.Background(), d, client); diags.HasError() {
+			t.Fatalf("Error creating: %v", diags)
+		}
+
+		if d.Id() != groupingID {
+			t.Errorf("Unexpected ID. Expected: %s, got: %s", groupingID, d.Id())
+		}
+		if len(requests) != 2 {
+			t.Fatalf("Expected a create and a read, got %d requests: %+v", len(requests), requests)
+		}
+		if requests[0].method != http.MethodPost || requests[0].path != "/v1/signals/grouping" {
+			t.Errorf("Unexpected create request: %s %s", requests[0].method, requests[0].path)
+		}
+		if requests[1].method != http.MethodGet || requests[1].path != "/v1/signals/grouping/"+groupingID {
+			t.Errorf("Unexpected read request: %s %s", requests[1].method, requests[1].path)
+		}
+		if got := d.Get("strategy.0.substring.0.field_name").(string); got != "tags" {
+			t.Errorf("Unexpected field_name in state. Expected: tags, got: %s", got)
+		}
+	})
+
+	t.Run("update then read", func(t *testing.T) {
+		var requests []recorded
+		client, ts := newServer(t, &requests, "summary", "changed")
+		defer ts.Close()
+
+		d := config(t, "summary", "changed")
+		d.SetId(groupingID)
+		if diags := updateResourceFireHydrantSignalAlertGroupingConfiguration(context.Background(), d, client); diags.HasError() {
+			t.Fatalf("Error updating: %v", diags)
+		}
+
+		if len(requests) != 2 {
+			t.Fatalf("Expected an update and a read, got %d requests: %+v", len(requests), requests)
+		}
+		if requests[0].method != http.MethodPatch || requests[0].path != "/v1/signals/grouping/"+groupingID {
+			t.Errorf("Unexpected update request: %s %s", requests[0].method, requests[0].path)
+		}
+		// The update body has to carry the new configuration, not the old state.
+		for _, want := range []string{`"field_name":"summary"`, `"changed"`, `"reference_alert_time_period":"PT30M"`} {
+			if !strings.Contains(requests[0].body, want) {
+				t.Errorf("Update body missing %s. Got: %s", want, requests[0].body)
+			}
+		}
+		if requests[1].method != http.MethodGet {
+			t.Errorf("Unexpected read request after update: %s", requests[1].method)
+		}
+		if got := d.Get("strategy.0.substring.0.field_name").(string); got != "summary" {
+			t.Errorf("Unexpected field_name in state. Expected: summary, got: %s", got)
+		}
+	})
 }

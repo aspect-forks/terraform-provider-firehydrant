@@ -201,19 +201,36 @@ func deleteResourceFireHydrantSignalWebhookTarget(ctx context.Context, d *schema
 	})
 	err := client.Sdk.Signals.DeleteSignalsWebhookTarget(ctx, webhookTargetID)
 	if err != nil {
-		// A webhook target that has already been deleted is not an error, it
-		// just needs to come out of state.
-		if sdkErr, ok := err.(*sdkerrors.SDKError); ok && sdkErr.StatusCode == 404 {
-			tflog.Debug(ctx, fmt.Sprintf("Signal webhook target %s no longer exists", webhookTargetID), map[string]interface{}{
-				"id": webhookTargetID,
-			})
-			d.SetId("")
-			return nil
+		if !signalsDeleteErrorMeansGone(err) {
+			return diag.Errorf("Error deleting signal webhook target %s: %v", webhookTargetID, err)
 		}
-		return diag.Errorf("Error deleting signal webhook target %s: %v", webhookTargetID, err)
+		tflog.Debug(ctx, fmt.Sprintf("Signal webhook target %s is gone: %v", webhookTargetID, err), map[string]interface{}{
+			"id": webhookTargetID,
+		})
 	}
 
 	d.SetId("")
 
 	return diag.Diagnostics{}
+}
+
+// signalsDeleteErrorMeansGone reports whether an error from a Signals delete
+// endpoint actually means the resource is gone.
+//
+// The delete operations in the SDK treat 204 as the only success and report every
+// other status, success included, as an unknown status code. Signals delete
+// endpoints answer 200 with the resource they deleted, so a delete that worked
+// comes back as an error carrying a 2xx status. Deleting something that is already
+// gone answers 404, which only needs to come out of state.
+func signalsDeleteErrorMeansGone(err error) bool {
+	sdkErr, ok := err.(*sdkerrors.SDKError)
+	if !ok {
+		return false
+	}
+
+	if sdkErr.StatusCode >= 200 && sdkErr.StatusCode < 300 {
+		return true
+	}
+
+	return sdkErr.StatusCode == 404
 }
