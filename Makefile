@@ -3,7 +3,7 @@ HOSTNAME=registry.terraform.io
 NAMESPACE=firehydrant
 NAME=firehydrant
 BINARY=terraform-provider-${NAME}
-VERSION=0.0.0-aspect-0
+VERSION=0.0.0-aspect-2
 OS_ARCH=darwin_amd64
 
 default: install
