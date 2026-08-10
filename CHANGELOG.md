@@ -3,6 +3,7 @@
 FEATURES:
 
 * **New Resource:** `firehydrant_signal_webhook_target` ([#244](https://github.com/firehydrant/terraform-provider-firehydrant/pull/244))
+* **New Resource:** `firehydrant_signal_alert_grouping_configuration`
 
 ## 0.15.2
 
